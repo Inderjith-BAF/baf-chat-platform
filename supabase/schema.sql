@@ -106,7 +106,7 @@ begin
    on conflict(workspace_id,user_id) do nothing;
  end if;
  return new;
-end $;
+end $;;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
 
@@ -186,7 +186,7 @@ begin
  insert into public.join_requests(workspace_id,user_id,email,requested_name)
  select wid,(select auth.uid()),coalesce((select email from auth.users where id=(select auth.uid())),'unknown'),coalesce((select full_name from public.profiles where id=(select auth.uid())),'New member')
  on conflict(workspace_id,user_id) do update set status='pending',requested_name=excluded.requested_name;
-end $;
+end $;;
 grant execute on function public.request_workspace_join(text) to authenticated;
 
 create or replace function public.get_or_create_dm(p_workspace_id uuid,p_other_user_id uuid)
@@ -208,7 +208,7 @@ begin
    insert into public.dm_participants(thread_id,user_id) values(tid,(select auth.uid())),(tid,p_other_user_id);
  end if;
  return tid;
-end $;
+end $;;
 grant execute on function public.get_or_create_dm(uuid,uuid) to authenticated;
 
 -- Bootstrap after creating the first account:
