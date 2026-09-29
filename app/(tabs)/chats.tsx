@@ -3,6 +3,7 @@ import {Animated,Image,KeyboardAvoidingView,Modal,Platform,Pressable,ScrollView,
 import {LinearGradient} from 'expo-linear-gradient';
 import {Ionicons} from '@expo/vector-icons';
 import {colors,gradients,shadow} from '@/src/theme';
+import {router} from 'expo-router';
 
 type Msg={id:number;name:string;initials:string;text:string;time:string;color:string;mine?:boolean;reactions:string[];avatarUri?:string};
 const channels=[['general','Team HQ','👋','8'],['marketing','Marketing','✨','5'],['outreach','Outbound squad','🚀','12'],['campaigns','Campaigns','🎯','3'],['content','Content lab','🎨',''],['random','Random','🪩','']];
@@ -73,7 +74,7 @@ export default function Chats(){
     <Pressable onPress={()=>setShowProfile(v=>!v)}><Avatar initials="IN" color={colors.violet}/></Pressable>
    </View>
    {showNotifs&&<View style={s.popover}><Text style={s.popTitle}>Notifications 🔔</Text><Text style={s.popItem}>🌸 Daisy mentioned you in #marketing</Text><Text style={s.popItem}>🔥 Aarthi reacted to your message</Text><Text style={s.popItem}>🎯 New campaign thread started</Text></View>}
-   {showProfile&&<View style={[s.popover,{right:18,width:220}]}><Text style={s.popTitle}>Inderjith ✦</Text><Text style={s.popItem}>🟢 Online</Text><Text style={s.popItem}>Set a status</Text><Text style={s.popItem}>Account settings</Text></View>}
+   {showProfile&&<View style={[s.popover,{right:18,width:220}]}><Text style={s.popTitle}>Inderjith ✦</Text><Text style={s.popItem}>🟢 Online</Text><Pressable onPress={()=>router.push('/admin')}><Text style={s.popItem}>⚡ Workspace admin</Text></Pressable><Pressable onPress={()=>router.push('/signup')}><Text style={s.popItem}>✨ Invite / member signup</Text></Pressable><Text style={s.popItem}>Set a status</Text><Text style={s.popItem}>Account settings</Text></View>}
   </LinearGradient>
 
   <View style={s.body}>
