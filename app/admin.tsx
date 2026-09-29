@@ -22,13 +22,15 @@ export default function Admin(){
  const load=async()=>{
   const{data:{user}}=await supabase.auth.getUser();
   if(!user){router.replace('/login');return}
-  const wm=await supabase.from('workspace_members').select('workspace_id,role').eq('user_id',user.id).eq('status','active').limit(1).maybeSingle();
-  if(!wm.data||wm.data.role!=='admin'){setAllowed(false);return}
-  setAllowed(true);setWorkspaceId(wm.data.workspace_id);
+  const wm=await supabase.rpc('get_my_workspace_membership');
+  if(wm.error){setError('Workspace membership check failed: '+wm.error.message);setAllowed(false);return}
+  const membership=wm.data?.[0];
+  if(!membership||membership.status!=='active'||membership.role!=='admin'){setAllowed(false);return}
+  setAllowed(true);setWorkspaceId(membership.workspace_id);
   const[cr,mr,rr,ar]=await Promise.all([
-   supabase.from('channels').select('id,name,slug,emoji').eq('workspace_id',wm.data.workspace_id).order('created_at'),
-   supabase.from('workspace_members').select('user_id,role,profile:profiles(id,full_name,email,avatar_url,status)').eq('workspace_id',wm.data.workspace_id).eq('status','active'),
-   supabase.from('join_requests').select('id,user_id,email,requested_name,status,created_at').eq('workspace_id',wm.data.workspace_id).eq('status','pending').order('created_at',{ascending:false}),
+   supabase.from('channels').select('id,name,slug,emoji').eq('workspace_id',membership.workspace_id).order('created_at'),
+   supabase.from('workspace_members').select('user_id,role,profile:profiles(id,full_name,email,avatar_url,status)').eq('workspace_id',membership.workspace_id).eq('status','active'),
+   supabase.from('join_requests').select('id,user_id,email,requested_name,status,created_at').eq('workspace_id',membership.workspace_id).eq('status','pending').order('created_at',{ascending:false}),
    supabase.from('channel_members').select('channel_id,user_id')
   ]);
   if(cr.error) setError(cr.error.message); else setChannels(cr.data||[]);
