@@ -164,6 +164,41 @@ alter publication supabase_realtime add table public.channel_messages;
 alter publication supabase_realtime add table public.dm_messages;
 alter publication supabase_realtime add table public.message_reactions;
 
+create or replace function public.request_workspace_join(workspace_slug text)
+returns void language plpgsql security definer set search_path=''
+as $
+declare wid uuid;
+begin
+ select id into wid from public.workspaces where slug=workspace_slug;
+ if wid is null then raise exception 'Workspace not found'; end if;
+ insert into public.join_requests(workspace_id,user_id,email,requested_name)
+ select wid,(select auth.uid()),coalesce((select email from auth.users where id=(select auth.uid())),'unknown'),coalesce((select full_name from public.profiles where id=(select auth.uid())),'New member')
+ on conflict(workspace_id,user_id) do update set status='pending',requested_name=excluded.requested_name;
+end $;
+grant execute on function public.request_workspace_join(text) to authenticated;
+
+create or replace function public.get_or_create_dm(p_workspace_id uuid,p_other_user_id uuid)
+returns uuid language plpgsql security definer set search_path=''
+as $
+declare tid uuid;
+begin
+ if not public.is_workspace_member(p_workspace_id) then raise exception 'Not a workspace member'; end if;
+ if not public.is_workspace_member(p_workspace_id) then raise exception 'Invalid workspace'; end if;
+ select t.id into tid
+ from public.dm_threads t
+ where t.workspace_id=p_workspace_id
+ and exists(select 1 from public.dm_participants p where p.thread_id=t.id and p.user_id=(select auth.uid()))
+ and exists(select 1 from public.dm_participants p where p.thread_id=t.id and p.user_id=p_other_user_id)
+ and (select count(*) from public.dm_participants p where p.thread_id=t.id)=2
+ limit 1;
+ if tid is null then
+   insert into public.dm_threads(workspace_id) values(p_workspace_id) returning id into tid;
+   insert into public.dm_participants(thread_id,user_id) values(tid,(select auth.uid())),(tid,p_other_user_id);
+ end if;
+ return tid;
+end $;
+grant execute on function public.get_or_create_dm(uuid,uuid) to authenticated;
+
 -- Bootstrap after creating the first account:
 -- insert into public.workspaces(name,slug,owner_id) values('Bookairfreight HQ','bookairfreight-hq','YOUR_AUTH_USER_UUID');
 -- insert into public.workspace_members(workspace_id,user_id,role) select id,'YOUR_AUTH_USER_UUID','admin' from public.workspaces where slug='bookairfreight-hq';
