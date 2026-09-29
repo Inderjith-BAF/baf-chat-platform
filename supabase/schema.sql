@@ -8,5 +8,5 @@ alter table public.chat_channels enable row level security; alter table public.c
 create policy "members can read channels" on public.chat_channels for select using (not is_private or exists(select 1 from public.chat_channel_members m where m.channel_id=id and m.user_id=auth.uid()));
 create policy "members can read messages" on public.chat_messages for select using (exists(select 1 from public.chat_channel_members m where m.channel_id=chat_messages.channel_id and m.user_id=auth.uid()));
 create policy "members can send messages" on public.chat_messages for insert with check (sender_id=auth.uid() and exists(select 1 from public.chat_channel_members m where m.channel_id=chat_messages.channel_id and m.user_id=auth.uid()));
-create policy "members can read memberships" on public.chat_channel_members for select using (user_id=auth.uid() or exists(select 1 from public.chat_channel_members m where m.channel_id=chat_channel_members.channel_id and m.user_id=auth.uid()));
+create policy "users can read their memberships" on public.chat_channel_members for select using (user_id=auth.uid());
 create policy "members can read reactions" on public.chat_reactions for select using (exists(select 1 from public.chat_messages msg join public.chat_channel_members m on m.channel_id=msg.channel_id where msg.id=chat_reactions.message_id and m.user_id=auth.uid()));
