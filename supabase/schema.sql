@@ -1,12 +1,171 @@
-create extension if not exists "pgcrypto";
-create table if not exists public.chat_channels (id uuid primary key default gen_random_uuid(), name text not null unique, description text, is_private boolean not null default false, created_by uuid references auth.users(id) on delete set null, created_at timestamptz not null default now());
-create table if not exists public.chat_channel_members (channel_id uuid references public.chat_channels(id) on delete cascade, user_id uuid references auth.users(id) on delete cascade, joined_at timestamptz not null default now(), primary key(channel_id,user_id));
-create table if not exists public.chat_messages (id uuid primary key default gen_random_uuid(), channel_id uuid references public.chat_channels(id) on delete cascade, sender_id uuid references auth.users(id) on delete cascade not null, content text not null, reply_to_id uuid references public.chat_messages(id) on delete set null, edited_at timestamptz, deleted_at timestamptz, created_at timestamptz not null default now());
-create table if not exists public.chat_reactions (message_id uuid references public.chat_messages(id) on delete cascade, user_id uuid references auth.users(id) on delete cascade, emoji text not null, created_at timestamptz not null default now(), primary key(message_id,user_id,emoji));
-create index if not exists chat_messages_channel_created_idx on public.chat_messages(channel_id,created_at desc);
-alter table public.chat_channels enable row level security; alter table public.chat_channel_members enable row level security; alter table public.chat_messages enable row level security; alter table public.chat_reactions enable row level security;
-create policy "members can read channels" on public.chat_channels for select using (not is_private or exists(select 1 from public.chat_channel_members m where m.channel_id=id and m.user_id=auth.uid()));
-create policy "members can read messages" on public.chat_messages for select using (exists(select 1 from public.chat_channel_members m where m.channel_id=chat_messages.channel_id and m.user_id=auth.uid()));
-create policy "members can send messages" on public.chat_messages for insert with check (sender_id=auth.uid() and exists(select 1 from public.chat_channel_members m where m.channel_id=chat_messages.channel_id and m.user_id=auth.uid()));
-create policy "users can read their memberships" on public.chat_channel_members for select using (user_id=auth.uid());
-create policy "members can read reactions" on public.chat_reactions for select using (exists(select 1 from public.chat_messages msg join public.chat_channel_members m on m.channel_id=msg.channel_id where msg.id=chat_reactions.message_id and m.user_id=auth.uid()));
+-- BAF Chat production schema
+create extension if not exists pgcrypto;
+
+create table if not exists public.profiles (
+ id uuid primary key references auth.users(id) on delete cascade,
+ full_name text not null,
+ avatar_url text,
+ status text not null default 'offline' check(status in('online','away','offline')),
+ created_at timestamptz not null default now(),
+ updated_at timestamptz not null default now()
+);
+create table if not exists public.workspaces (
+ id uuid primary key default gen_random_uuid(),
+ name text not null,
+ slug text unique not null,
+ owner_id uuid not null references auth.users(id) on delete restrict,
+ created_at timestamptz not null default now()
+);
+create table if not exists public.workspace_members (
+ workspace_id uuid not null references public.workspaces(id) on delete cascade,
+ user_id uuid not null references public.profiles(id) on delete cascade,
+ role text not null default 'member' check(role in('admin','member')),
+ status text not null default 'active' check(status in('pending','active','suspended')),
+ created_at timestamptz not null default now(),
+ primary key(workspace_id,user_id)
+);
+create table if not exists public.channels (
+ id uuid primary key default gen_random_uuid(),
+ workspace_id uuid not null references public.workspaces(id) on delete cascade,
+ name text not null,
+ slug text not null,
+ emoji text not null default '💬',
+ is_private boolean not null default false,
+ created_by uuid references public.profiles(id) on delete set null,
+ created_at timestamptz not null default now(),
+ unique(workspace_id,slug)
+);
+create table if not exists public.channel_messages (
+ id uuid primary key default gen_random_uuid(),
+ channel_id uuid not null references public.channels(id) on delete cascade,
+ sender_id uuid not null references public.profiles(id) on delete cascade,
+ body text not null check(length(trim(body)) between 1 and 10000),
+ created_at timestamptz not null default now(),
+ edited_at timestamptz
+);
+create table if not exists public.message_reactions (
+ message_id uuid not null references public.channel_messages(id) on delete cascade,
+ user_id uuid not null references public.profiles(id) on delete cascade,
+ emoji text not null,
+ created_at timestamptz not null default now(),
+ primary key(message_id,user_id,emoji)
+);
+create table if not exists public.dm_threads (
+ id uuid primary key default gen_random_uuid(),
+ workspace_id uuid not null references public.workspaces(id) on delete cascade,
+ created_at timestamptz not null default now()
+);
+create table if not exists public.dm_participants (
+ thread_id uuid not null references public.dm_threads(id) on delete cascade,
+ user_id uuid not null references public.profiles(id) on delete cascade,
+ primary key(thread_id,user_id)
+);
+create table if not exists public.dm_messages (
+ id uuid primary key default gen_random_uuid(),
+ thread_id uuid not null references public.dm_threads(id) on delete cascade,
+ sender_id uuid not null references public.profiles(id) on delete cascade,
+ body text not null check(length(trim(body)) between 1 and 10000),
+ created_at timestamptz not null default now()
+);
+create table if not exists public.join_requests (
+ id uuid primary key default gen_random_uuid(),
+ workspace_id uuid not null references public.workspaces(id) on delete cascade,
+ user_id uuid not null references public.profiles(id) on delete cascade,
+ email text not null,
+ requested_name text not null,
+ status text not null default 'pending' check(status in('pending','approved','rejected')),
+ created_at timestamptz not null default now(),
+ reviewed_at timestamptz,
+ unique(workspace_id,user_id)
+);
+
+create index if not exists workspace_members_user_idx on public.workspace_members(user_id);
+create index if not exists channels_workspace_idx on public.channels(workspace_id);
+create index if not exists channel_messages_channel_created_idx on public.channel_messages(channel_id,created_at);
+create index if not exists dm_participants_user_idx on public.dm_participants(user_id);
+create index if not exists dm_messages_thread_created_idx on public.dm_messages(thread_id,created_at);
+
+create or replace function public.is_workspace_member(p_workspace_id uuid)
+returns boolean language sql stable security definer set search_path=''
+as $$ select exists(select 1 from public.workspace_members wm where wm.workspace_id=p_workspace_id and wm.user_id=(select auth.uid()) and wm.status='active') $$;
+create or replace function public.is_workspace_admin(p_workspace_id uuid)
+returns boolean language sql stable security definer set search_path=''
+as $$ select exists(select 1 from public.workspace_members wm where wm.workspace_id=p_workspace_id and wm.user_id=(select auth.uid()) and wm.status='active' and wm.role='admin') or exists(select 1 from public.workspaces w where w.id=p_workspace_id and w.owner_id=(select auth.uid())) $$;
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path=''
+as $$ begin insert into public.profiles(id,full_name) values(new.id,coalesce(new.raw_user_meta_data->>'full_name',split_part(new.email,'@',1))); return new; end $$;
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
+
+alter table public.profiles enable row level security;
+alter table public.workspaces enable row level security;
+alter table public.workspace_members enable row level security;
+alter table public.channels enable row level security;
+alter table public.channel_messages enable row level security;
+alter table public.message_reactions enable row level security;
+alter table public.dm_threads enable row level security;
+alter table public.dm_participants enable row level security;
+alter table public.dm_messages enable row level security;
+alter table public.join_requests enable row level security;
+
+drop policy if exists profiles_read on public.profiles;
+create policy profiles_read on public.profiles for select to authenticated using(true);
+drop policy if exists profiles_update_self on public.profiles;
+create policy profiles_update_self on public.profiles for update to authenticated using((select auth.uid())=id) with check((select auth.uid())=id);
+
+drop policy if exists workspaces_read on public.workspaces;
+create policy workspaces_read on public.workspaces for select to authenticated using((select public.is_workspace_member(id)));
+drop policy if exists workspace_members_read on public.workspace_members;
+create policy workspace_members_read on public.workspace_members for select to authenticated using((select public.is_workspace_member(workspace_id)));
+drop policy if exists workspace_members_admin_insert on public.workspace_members;
+create policy workspace_members_admin_insert on public.workspace_members for insert to authenticated with check((select public.is_workspace_admin(workspace_id)));
+drop policy if exists workspace_members_admin_update on public.workspace_members;
+create policy workspace_members_admin_update on public.workspace_members for update to authenticated using((select public.is_workspace_admin(workspace_id))) with check((select public.is_workspace_admin(workspace_id)));
+
+drop policy if exists channels_read on public.channels;
+create policy channels_read on public.channels for select to authenticated using((select public.is_workspace_member(workspace_id)));
+drop policy if exists channels_admin_insert on public.channels;
+create policy channels_admin_insert on public.channels for insert to authenticated with check((select public.is_workspace_admin(workspace_id)));
+
+drop policy if exists channel_messages_read on public.channel_messages;
+create policy channel_messages_read on public.channel_messages for select to authenticated using(exists(select 1 from public.channels c where c.id=channel_id and (select public.is_workspace_member(c.workspace_id))));
+drop policy if exists channel_messages_insert on public.channel_messages;
+create policy channel_messages_insert on public.channel_messages for insert to authenticated with check((select auth.uid())=sender_id and exists(select 1 from public.channels c where c.id=channel_id and (select public.is_workspace_member(c.workspace_id))));
+
+drop policy if exists reactions_read on public.message_reactions;
+create policy reactions_read on public.message_reactions for select to authenticated using(exists(select 1 from public.channel_messages m join public.channels c on c.id=m.channel_id where m.id=message_id and (select public.is_workspace_member(c.workspace_id))));
+drop policy if exists reactions_insert on public.message_reactions;
+create policy reactions_insert on public.message_reactions for insert to authenticated with check((select auth.uid())=user_id);
+drop policy if exists reactions_delete on public.message_reactions;
+create policy reactions_delete on public.message_reactions for delete to authenticated using((select auth.uid())=user_id);
+
+drop policy if exists dm_threads_read on public.dm_threads;
+create policy dm_threads_read on public.dm_threads for select to authenticated using(exists(select 1 from public.dm_participants p where p.thread_id=id and p.user_id=(select auth.uid())));
+drop policy if exists dm_threads_insert on public.dm_threads;
+create policy dm_threads_insert on public.dm_threads for insert to authenticated with check((select public.is_workspace_member(workspace_id)));
+drop policy if exists dm_participants_read on public.dm_participants;
+create policy dm_participants_read on public.dm_participants for select to authenticated using(exists(select 1 from public.dm_participants p where p.thread_id=dm_participants.thread_id and p.user_id=(select auth.uid())));
+drop policy if exists dm_participants_insert on public.dm_participants;
+create policy dm_participants_insert on public.dm_participants for insert to authenticated with check((select auth.uid())=user_id or exists(select 1 from public.dm_participants p where p.thread_id=dm_participants.thread_id and p.user_id=(select auth.uid())));
+drop policy if exists dm_messages_read on public.dm_messages;
+create policy dm_messages_read on public.dm_messages for select to authenticated using(exists(select 1 from public.dm_participants p where p.thread_id=dm_messages.thread_id and p.user_id=(select auth.uid())));
+drop policy if exists dm_messages_insert on public.dm_messages;
+create policy dm_messages_insert on public.dm_messages for insert to authenticated with check((select auth.uid())=sender_id and exists(select 1 from public.dm_participants p where p.thread_id=dm_messages.thread_id and p.user_id=(select auth.uid())));
+
+drop policy if exists join_requests_insert on public.join_requests;
+create policy join_requests_insert on public.join_requests for insert to authenticated with check((select auth.uid())=user_id);
+drop policy if exists join_requests_read on public.join_requests;
+create policy join_requests_read on public.join_requests for select to authenticated using((select auth.uid())=user_id or (select public.is_workspace_admin(workspace_id)));
+drop policy if exists join_requests_admin_update on public.join_requests;
+create policy join_requests_admin_update on public.join_requests for update to authenticated using((select public.is_workspace_admin(workspace_id))) with check((select public.is_workspace_admin(workspace_id)));
+
+alter publication supabase_realtime add table public.channel_messages;
+alter publication supabase_realtime add table public.dm_messages;
+alter publication supabase_realtime add table public.message_reactions;
+
+-- Bootstrap after creating the first account:
+-- insert into public.workspaces(name,slug,owner_id) values('Bookairfreight HQ','bookairfreight-hq','YOUR_AUTH_USER_UUID');
+-- insert into public.workspace_members(workspace_id,user_id,role) select id,'YOUR_AUTH_USER_UUID','admin' from public.workspaces where slug='bookairfreight-hq';
+-- insert into public.channels(workspace_id,name,slug,emoji,created_by) select id,'Team HQ','general','👋','YOUR_AUTH_USER_UUID' from public.workspaces where slug='bookairfreight-hq';
+-- Add the remaining channels the same way.
