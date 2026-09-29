@@ -4,6 +4,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.profiles (
  id uuid primary key references auth.users(id) on delete cascade,
  full_name text not null,
+ email text,
  avatar_url text,
  status text not null default 'offline' check(status in('online','away','offline')),
  created_at timestamptz not null default now(),
@@ -97,7 +98,7 @@ returns trigger language plpgsql security definer set search_path=''
 as $
 declare wid uuid;
 begin
- insert into public.profiles(id,full_name) values(new.id,coalesce(new.raw_user_meta_data->>'full_name',split_part(new.email,'@',1)));
+ insert into public.profiles(id,full_name,email) values(new.id,coalesce(new.raw_user_meta_data->>'full_name',split_part(new.email,'@',1)),new.email);
  select id into wid from public.workspaces where slug=coalesce(new.raw_user_meta_data->>'workspace_slug','bookairfreight-hq');
  if wid is not null then
    insert into public.join_requests(workspace_id,user_id,email,requested_name)
