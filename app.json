@@ -1,0 +1,1 @@
+{"expo":{"name":"BAF Chat","slug":"baf-chat","version":"0.1.0","orientation":"portrait","scheme":"bafchat","userInterfaceStyle":"light","plugins":["expo-router"],"ios":{"supportsTablet":true,"bundleIdentifier":"com.baf.chat"},"android":{"package":"com.baf.chat"},"web":{"bundler":"metro"}}}
