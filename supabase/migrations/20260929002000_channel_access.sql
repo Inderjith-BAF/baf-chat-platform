@@ -57,7 +57,7 @@ using (
 drop policy if exists channel_messages_read on public.channel_messages;
 create policy channel_messages_read on public.channel_messages
 for select to authenticated
-using (public.is_channel_member(channel_id));
+using (public.is_channel_member(channel_id) or exists(select 1 from public.channels c where c.id=channel_id and public.is_workspace_admin(c.workspace_id)));
 
 drop policy if exists channel_messages_insert on public.channel_messages;
 create policy channel_messages_insert on public.channel_messages
