@@ -95,7 +95,7 @@ as $$ select exists(select 1 from public.workspace_members wm where wm.workspace
 
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path=''
-as $
+as $$
 declare wid uuid;
 begin
  insert into public.profiles(id,full_name,email) values(new.id,coalesce(new.raw_user_meta_data->>'full_name',split_part(new.email,'@',1)),new.email);
@@ -106,7 +106,7 @@ begin
    on conflict(workspace_id,user_id) do nothing;
  end if;
  return new;
-end $;
+end $$;
 drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created after insert on auth.users for each row execute function public.handle_new_user();
 
@@ -178,7 +178,7 @@ alter publication supabase_realtime add table public.message_reactions;
 
 create or replace function public.request_workspace_join(workspace_slug text)
 returns void language plpgsql security definer set search_path=''
-as $
+as $$
 declare wid uuid;
 begin
  select id into wid from public.workspaces where slug=workspace_slug;
@@ -186,12 +186,12 @@ begin
  insert into public.join_requests(workspace_id,user_id,email,requested_name)
  select wid,(select auth.uid()),coalesce((select email from auth.users where id=(select auth.uid())),'unknown'),coalesce((select full_name from public.profiles where id=(select auth.uid())),'New member')
  on conflict(workspace_id,user_id) do update set status='pending',requested_name=excluded.requested_name;
-end $;
+end $$;
 grant execute on function public.request_workspace_join(text) to authenticated;
 
 create or replace function public.get_or_create_dm(p_workspace_id uuid,p_other_user_id uuid)
 returns uuid language plpgsql security definer set search_path=''
-as $
+as $$
 declare tid uuid;
 begin
  if not public.is_workspace_member(p_workspace_id) then raise exception 'Not a workspace member'; end if;
@@ -208,7 +208,7 @@ begin
    insert into public.dm_participants(thread_id,user_id) values(tid,(select auth.uid())),(tid,p_other_user_id);
  end if;
  return tid;
-end $;
+end $$;
 grant execute on function public.get_or_create_dm(uuid,uuid) to authenticated;
 
 -- Bootstrap after creating the first account:
